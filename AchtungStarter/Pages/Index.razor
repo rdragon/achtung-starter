@@ -1,0 +1,164 @@
+﻿@page "/"
+
+@using AchtungStarter.Core
+@inject Controller Controller
+
+<h1>@_title</h1>
+
+@if (_status == Status.LoadingState)
+{
+    <p><em>Please wait...</em></p>
+}
+else if (_status == Status.ServerOffline)
+{
+    <p>The Achtung server is offline.</p>
+    <button class="btn btn-primary" @onclick="StartServer">Start server</button>
+}
+else if (_status == Status.StartingServer)
+{
+    <p><em>Starting Achtung server. This takes approximately two minutes. Please wait...</em></p>
+}
+else if (_status == Status.ServerOnline)
+{
+    <p>
+        The Achtung server is online.
+    </p>
+
+    <p>
+        <big>Achtung Server URL: <a target="_blank" href="@_state?.Url">@_state?.Url</a></big>
+    </p>
+
+    <p class="mt-3">
+        The server automatically shuts down in @_timeLeftMessage.
+    </p>
+
+    @if (_minutesLeft < 59)
+    {
+        <button class="btn btn-primary" @onclick="() => AddMinutes(10)">Add 10 minutes</button>
+        <button class="btn btn-primary" @onclick="() => AddMinutes(30)">Add 30 minutes</button>
+        <p>
+            Delay the shutdown.
+        </p>
+    }
+
+    <button class="btn btn-danger" @onclick="ShutDownServer">Shut down server</button>
+}
+else if (_status == Status.ShuttingDownServer)
+{
+    <p><em>Shutting down Achtung server...</em></p>
+}
+
+@code {
+    private Status _status = Status.LoadingState;
+    private State? _state;
+    private System.Timers.Timer _timer = new(5_000);
+    private string? _timeLeftMessage;
+    private string _title = "Server status";
+    private int _minutesLeft;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.CompletedTask;
+
+        UpdateState(Controller.GetState());
+
+        _timer.Elapsed += async (_, _) =>
+        {
+            var newState = Controller.GetState();
+
+            if (newState is null ? _state is { } : !newState.Equals(_state))
+            {
+                UpdateState(newState);
+                await InvokeAsync(() => StateHasChanged());
+            }
+        };
+
+        _timer.Enabled = true;
+    }
+
+    private void StartServer()
+    {
+        _timer.Enabled = false;
+        UpdateStatus(Status.StartingServer);
+        Controller.StartServer();
+        _timer.Enabled = true;
+    }
+
+    private async Task AddMinutes(int minutes)
+    {
+        _timer.Enabled = false;
+        UpdateStatus(Status.LoadingState);
+        UpdateState(await Controller.AddMinutes(minutes));
+        _timer.Enabled = true;
+    }
+
+    private async Task ShutDownServer()
+    {
+        _timer.Enabled = false;
+        UpdateStatus(Status.ShuttingDownServer);
+        UpdateState(await Controller.ShutDownServer());
+        _timer.Enabled = true;
+    }
+
+    private void UpdateState(State? state)
+    {
+        _state = state;
+        bool online;
+
+        if (_state is null)
+        {
+            UpdateStatus(Status.ServerOffline);
+            online = false;
+        }
+        else if (_state.Started)
+        {
+            UpdateStatus(Status.ServerOnline);
+            online = true;
+        }
+        else
+        {
+            UpdateStatus(Status.StartingServer);
+            online = false;
+        }
+
+        _title = $"Server is {(online ? "online" : "offline")}";
+    }
+
+    private void UpdateStatus(Status newStatus)
+    {
+        if (newStatus == Status.ServerOnline)
+        {
+            UpdateSecondsUntilShutdown();
+        }
+
+        _status = newStatus;
+    }
+
+    private void UpdateSecondsUntilShutdown()
+    {
+        if (_state?.ShutDownTime is DateTimeOffset shutdownTime)
+        {
+            var minutes = (int)Math.Round(shutdownTime.Subtract(DateTimeOffset.Now).TotalMinutes);
+
+            if (minutes < 0.5)
+            {
+                _timeLeftMessage = "less than 30 seconds";
+            }
+            else
+            {
+                _timeLeftMessage = $"approximately {minutes} minute{(minutes == 1 ? "" : "s")}";
+            }
+
+            _minutesLeft = minutes;
+        }
+    }
+
+    enum Status
+    {
+        LoadingState,
+        ServerOffline,
+        StartingServer,
+        ServerOnline,
+        ShuttingDownServer,
+    }
+}
